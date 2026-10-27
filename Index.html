@@ -1,0 +1,734 @@
+--[[
+================================================================
+   VENICE MOBILE HUB  |  ALL IN ONE
+   ESP - Aimbot - Head Tracker - Teleport - Misc
+================================================================
+   Delta / Fluxus / Arceus X / Codex / Hydrogen / ...
+   Chargement :
+   loadstring(game:HttpGet("TON_LIEN_RAW_GITHUB"))()
+================================================================
+]]
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+local CoreGui          = game:GetService("CoreGui")
+local StarterGui       = game:GetService("StarterGui")
+local Workspace        = game:GetService("Workspace")
+local Lighting         = game:GetService("Lighting")
+local VirtualUser      = game:GetService("VirtualUser")
+
+local LP     = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+---------------------------------------------------------------
+-- CONFIG
+---------------------------------------------------------------
+local Config = {
+	ESP = {
+		Enabled = false,
+		Box = true, Name = true, Health = true, Distance = true, Tracer = true,
+		TeamCheck = false, MaxDist = 1500,
+		Color = Color3.fromRGB(0, 255, 170),
+	},
+	Aimbot = {
+		Enabled = false, FOV = 45, Smooth = 0.18,
+		TeamCheck = false, WallCheck = true, ShowFOV = true,
+	},
+	Tracker = {
+		Enabled = true, Health = true, Distance = true,
+		TeamCheck = false, MaxDist = 600,
+	},
+	Misc = {
+		Speed = 16, Jump = 50, InfJump = false,
+		Fly = false, FlySpeed = 70,
+		Fullbright = false, Noclip = false, AntiAFK = true,
+	},
+}
+
+---------------------------------------------------------------
+-- UTILITAIRES
+---------------------------------------------------------------
+local function sameTeam(plr)
+	if plr.Team == nil or LP.Team == nil then return false end
+	return plr.Team == LP.Team
+end
+
+local function getChar(plr)
+	local c = plr.Character
+	if not c then return nil end
+	local hum  = c:FindFirstChildOfClass("Humanoid")
+	local hrp  = c:FindFirstChild("HumanoidRootPart")
+	local head = c:FindFirstChild("Head")
+	if not (hum and hrp and head) then return nil end
+	if hum.Health <= 0 then return nil end
+	return c, hrp, head, hum
+end
+
+local EXCLUDE = Enum.RaycastFilterType.Exclude or Enum.RaycastFilterType.Blacklist
+
+local function isVisible(part)
+	local origin = Camera.CFrame.Position
+	local params = RaycastParams.new()
+	params.FilterType = EXCLUDE
+	params.FilterDescendantsInstances = { LP.Character, Camera }
+	local res = Workspace:Raycast(origin, part.Position - origin, params)
+	if not res then return true end
+	return res.Instance:IsDescendantOf(part.Parent)
+end
+
+local hasDrawing = pcall(function()
+	local t = Drawing.new("Text")
+	t:Remove()
+end)
+
+local function makeDrawing(class, props)
+	if not hasDrawing then return nil end
+	local ok, obj = pcall(Drawing.new, class)
+	if not ok or not obj then return nil end
+	for k, v in pairs(props or {}) do
+		pcall(function() obj[k] = v end)
+	end
+	return obj
+end
+
+---------------------------------------------------------------
+-- ESP + TRACKER
+---------------------------------------------------------------
+local ESP = { objects = {} }
+
+local function createESP(plr)
+	if ESP.objects[plr] then return ESP.objects[plr] end
+	local d = {}
+
+	d.Highlight = Instance.new("Highlight")
+	d.Highlight.Name = "VeniceESP"
+	d.Highlight.FillColor = Config.ESP.Color
+	d.Highlight.FillTransparency = 0.65
+	d.Highlight.OutlineColor = Config.ESP.Color
+	d.Highlight.OutlineTransparency = 0
+	d.Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	d.Highlight.Enabled = false
+	d.Highlight.Parent = Workspace
+
+	local tag = Instance.new("BillboardGui")
+	tag.Name = "VeniceTracker"
+	tag.Size = UDim2.new(0, 150, 0, 46)
+	tag.StudsOffset = Vector3.new(0, 2.9, 0)
+	tag.AlwaysOnTop = true
+	tag.Enabled = false
+	d.Tag = tag
+
+	local nameLbl = Instance.new("TextLabel")
+	nameLbl.Size = UDim2.new(1, 0, 0, 16)
+	nameLbl.BackgroundTransparency = 1
+	nameLbl.Font = Enum.Font.GothamBold
+	nameLbl.TextSize = 14
+	nameLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+	nameLbl.TextStrokeTransparency = 0
+	nameLbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	nameLbl.Text = plr.Name
+	nameLbl.Parent = tag
+	d.TagName = nameLbl
+
+	local distLbl = Instance.new("TextLabel")
+	distLbl.Size = UDim2.new(1, 0, 0, 14)
+	distLbl.Position = UDim2.new(0, 0, 0, 16)
+	distLbl.BackgroundTransparency = 1
+	distLbl.Font = Enum.Font.Gotham
+	distLbl.TextSize = 12
+	distLbl.TextColor3 = Color3.fromRGB(200, 255, 230)
+	distLbl.TextStrokeTransparency = 0.3
+	distLbl.Text = ""
+	distLbl.Parent = tag
+	d.TagDist = distLbl
+
+	local hpBg = Instance.new("Frame")
+	hpBg.Size = UDim2.new(0.6, 0, 0, 5)
+	hpBg.Position = UDim2.new(0.2, 0, 0, 32)
+	hpBg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	hpBg.BorderSizePixel = 0
+	hpBg.Parent = tag
+	d.TagHpBg = hpBg
+
+	local hpFill = Instance.new("Frame")
+	hpFill.Size = UDim2.new(1, 0, 1, 0)
+	hpFill.BackgroundColor3 = Color3.fromRGB(0, 255, 120)
+	hpFill.BorderSizePixel = 0
+	hpFill.Parent = hpBg
+	d.TagHpFill = hpFill
+
+	if hasDrawing then
+		d.Box    = makeDrawing("Square", { Thickness = 1.5, Filled = false, Transparency = 1, Visible = false })
+		d.Name   = makeDrawing("Text",   { Center = true, Outline = true, Font = 2, Size = 14, Transparency = 1, Visible = false })
+		d.Dist   = makeDrawing("Text",   { Center = true, Outline = true, Font = 2, Size = 12, Transparency = 1, Visible = false })
+		d.HpBg   = makeDrawing("Square", { Thickness = 0, Filled = true, Transparency = 1, Visible = false })
+		d.HpBar  = makeDrawing("Square", { Thickness = 0, Filled = true, Transparency = 1, Visible = false })
+		d.Tracer = makeDrawing("Line",   { Thickness = 1, Transparency = 1, Visible = false })
+	end
+
+	ESP.objects[plr] = d
+	return d
+end
+
+local function hideESP(d)
+	if d.Box then d.Box.Visible = false end
+	if d.Name then d.Name.Visible = false end
+	if d.Dist then d.Dist.Visible = false end
+	if d.HpBg then d.HpBg.Visible = false end
+	if d.HpBar then d.HpBar.Visible = false end
+	if d.Tracer then d.Tracer.Visible = false end
+	d.Highlight.Enabled = false
+	d.Tag.Enabled = false
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+	if plr ~= LP then createESP(plr) end
+end
+
+Players.PlayerAdded:Connect(function(plr)
+	if plr ~= LP then createESP(plr) end
+end)
+
+Players.PlayerRemoving:Connect(function(plr)
+	local d = ESP.objects[plr]
+	if d then
+		pcall(function() d.Highlight:Destroy() end)
+		pcall(function() d.Tag:Destroy() end)
+		ESP.objects[plr] = nil
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	local camPos = Camera.CFrame.Position
+	local vp = Camera.ViewportSize
+
+	for plr, d in pairs(ESP.objects) do
+		local c, hrp, head, hum = getChar(plr)
+
+		if not c then
+			hideESP(d)
+			continue
+		end
+
+		local dist = (camPos - hrp.Position).Magnitude
+
+		local espOn = Config.ESP.Enabled
+			and dist <= Config.ESP.MaxDist
+			and not (Config.ESP.TeamCheck and sameTeam(plr))
+
+		local trkOn = Config.Tracker.Enabled
+			and dist <= Config.Tracker.MaxDist
+			and not (Config.Tracker.TeamCheck and sameTeam(plr))
+
+		if espOn then
+			d.Highlight.Enabled = true
+			d.Highlight.Adornee = c
+			d.Highlight.FillColor = Config.ESP.Color
+			d.Highlight.OutlineColor = Config.ESP.Color
+
+			local top = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0, 3.1, 0))
+			local bot = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 2.9, 0))
+
+			if top.Z > 0 and bot.Z > 0 then
+				local h  = math.abs(top.Y - bot.Y)
+				local w  = h * 0.55
+				local cx = (top.X + bot.X) / 2
+				local ty = math.min(top.Y, bot.Y)
+				local by = math.max(top.Y, bot.Y)
+				local ratio = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+
+				if d.Box then
+					d.Box.Size = Vector2.new(w, h)
+					d.Box.Position = Vector2.new(cx - w / 2, ty)
+					d.Box.Color = Config.ESP.Color
+					d.Box.Visible = Config.ESP.Box
+				end
+
+				if d.HpBg then
+					d.HpBg.Size = Vector2.new(2, h)
+					d.HpBg.Position = Vector2.new(cx - w / 2 - 6, ty)
+					d.HpBg.Color = Color3.fromRGB(0, 0, 0)
+					d.HpBg.Visible = Config.ESP.Health
+				end
+
+				if d.HpBar then
+					d.HpBar.Size = Vector2.new(2, h * ratio)
+					d.HpBar.Position = Vector2.new(cx - w / 2 - 6, ty + (h - h * ratio))
+					d.HpBar.Color = Color3.fromRGB(0, 255, 110):Lerp(Color3.fromRGB(255, 60, 60), 1 - ratio)
+					d.HpBar.Visible = Config.ESP.Health
+				end
+
+				if d.Name then
+					d.Name.Text = plr.Name
+					d.Name.Position = Vector2.new(cx, ty - 16)
+					d.Name.Color = Config.ESP.Color
+					d.Name.Visible = Config.ESP.Name
+				end
+
+				if d.Dist then
+					d.Dist.Text = string.format("[%d]", math.floor(dist))
+					d.Dist.Position = Vector2.new(cx, by + 4)
+					d.Dist.Color = Config.ESP.Color
+					d.Dist.Visible = Config.ESP.Distance
+				end
+
+				if d.Tracer then
+					d.Tracer.From = Vector2.new(vp.X / 2, vp.Y)
+					d.Tracer.To = Vector2.new(cx, by)
+					d.Tracer.Color = Config.ESP.Color
+					d.Tracer.Visible = Config.ESP.Tracer
+				end
+			else
+				if d.Box then d.Box.Visible = false end
+				if d.Name then d.Name.Visible = false end
+				if d.Dist then d.Dist.Visible = false end
+				if d.HpBg then d.HpBg.Visible = false end
+				if d.HpBar then d.HpBar.Visible = false end
+				if d.Tracer then d.Tracer.Visible = false end
+			end
+		else
+			d.Highlight.Enabled = false
+			if d.Box then d.Box.Visible = false end
+			if d.Name then d.Name.Visible = false end
+			if d.Dist then d.Dist.Visible = false end
+			if d.HpBg then d.HpBg.Visible = false end
+			if d.HpBar then d.HpBar.Visible = false end
+			if d.Tracer then d.Tracer.Visible = false end
+		end
+
+		if trkOn then
+			if d.Tag.Parent ~= head then d.Tag.Parent = head end
+			d.Tag.MaxDistance = Config.Tracker.MaxDist
+			d.Tag.Enabled = true
+			d.TagName.Text = plr.Name
+
+			if Config.Tracker.Distance then
+				d.TagDist.Visible = true
+				d.TagDist.Text = string.format("%d studs", math.floor(dist))
+			else
+				d.TagDist.Visible = false
+			end
+
+			if Config.Tracker.Health then
+				local ratio = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+				d.TagHpBg.Visible = true
+				d.TagHpFill.Visible = true
+				d.TagHpFill.Size = UDim2.new(ratio, 0, 1, 0)
+				d.TagHpFill.BackgroundColor3 = Color3.fromRGB(0, 255, 110):Lerp(Color3.fromRGB(255, 60, 60), 1 - ratio)
+			else
+				d.TagHpBg.Visible = false
+				d.TagHpFill.Visible = false
+			end
+		else
+			d.Tag.Enabled = false
+		end
+	end
+end)
+
+---------------------------------------------------------------
+-- AIMBOT
+---------------------------------------------------------------
+local fovCircle = makeDrawing("Circle", {
+	Thickness = 1.5, Filled = false, Transparency = 0.35,
+	Color = Config.ESP.Color, Visible = false, NumSides = 64,
+})
+
+local function getAimTarget()
+	local vp = Camera.ViewportSize
+	local center = Vector2.new(vp.X / 2, vp.Y / 2)
+	local radius = math.min(vp.X, vp.Y) / 2 * (Config.Aimbot.FOV / 100)
+	local best, bestD = nil, radius
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LP and not (Config.Aimbot.TeamCheck and sameTeam(plr)) then
+			local c, hrp, head = getChar(plr)
+			if head then
+				local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
+				if onScreen then
+					local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+					if d < bestD then
+						if not Config.Aimbot.WallCheck or isVisible(head) then
+							best, bestD = head, d
+						end
+					end
+				end
+			end
+		end
+	end
+	return best
+end
+
+RunService.RenderStepped:Connect(function()
+	local vp = Camera.ViewportSize
+
+	if fovCircle then
+		fovCircle.Visible = Config.Aimbot.Enabled and Config.Aimbot.ShowFOV
+		fovCircle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
+		fovCircle.Radius = math.min(vp.X, vp.Y) / 2 * (Config.Aimbot.FOV / 100)
+		fovCircle.Color = Config.ESP.Color
+	end
+
+	if not Config.Aimbot.Enabled then return end
+
+	local target = getAimTarget()
+	if target then
+		local goal = CFrame.new(Camera.CFrame.Position, target.Position)
+		Camera.CFrame = Camera.CFrame:Lerp(goal, math.clamp(Config.Aimbot.Smooth, 0.02, 1))
+	end
+end)
+
+---------------------------------------------------------------
+-- MISC
+---------------------------------------------------------------
+local function applySpeed()
+	local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+	if hum then hum.WalkSpeed = Config.Misc.Speed end
+end
+
+local function applyJump()
+	local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+	if hum then hum.JumpPower = Config.Misc.Jump end
+end
+
+LP.CharacterAdded:Connect(function()
+	task.wait(1)
+	applySpeed()
+	applyJump()
+end)
+
+task.spawn(function()
+	if LP.Character then
+		applySpeed()
+		applyJump()
+	end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+	if Config.Misc.InfJump then
+		local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+	end
+end)
+
+local flyBV, flyBG
+
+local function stopFly()
+	local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+	if hum then hum.PlatformStand = false end
+	if flyBV then flyBV:Destroy(); flyBV = nil end
+	if flyBG then flyBG:Destroy(); flyBG = nil end
+end
+
+local function startFly()
+	local c = LP.Character
+	local hrp = c and c:FindFirstChild("HumanoidRootPart")
+	local hum = c and c:FindFirstChildOfClass("Humanoid")
+	if not (hrp and hum) then return end
+
+	hum.PlatformStand = true
+
+	flyBV = Instance.new("BodyVelocity")
+	flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+	flyBV.Velocity = Vector3.zero
+	flyBV.Parent = hrp
+
+	flyBG = Instance.new("BodyGyro")
+	flyBG.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+	flyBG.P = 1000
+	flyBG.D = 50
+	flyBG.CFrame = Camera.CFrame
+	flyBG.Parent = hrp
+end
+
+RunService.RenderStepped:Connect(function()
+	if not Config.Misc.Fly then return end
+	local c = LP.Character
+	local hrp = c and c:FindFirstChild("HumanoidRootPart")
+	local hum = c and c:FindFirstChildOfClass("Humanoid")
+	if not (hrp and hum) then return end
+	if not flyBV then startFly() end
+	if not flyBV then return end
+
+	local dir = hum.MoveDirection
+	local cam = Camera.CFrame
+	local move = (cam.RightVector * dir.X) + (cam.LookVector * -dir.Z)
+
+	if move.Magnitude > 0 then
+		flyBV.Velocity = move.Unit * Config.Misc.FlySpeed
+	else
+		flyBV.Velocity = Vector3.zero
+	end
+	flyBG.CFrame = cam
+end)
+
+RunService.Stepped:Connect(function()
+	if not Config.Misc.Noclip then return end
+	local c = LP.Character
+	if not c then return end
+	for _, part in ipairs(c:GetDescendants()) do
+		if part:IsA("BasePart") and part.CanCollide then
+			part.CanCollide = false
+		end
+	end
+end)
+
+local function applyFullbright()
+	if Config.Misc.Fullbright then
+		Lighting.Brightness = 3
+		Lighting.ClockTime = 14
+		Lighting.FogEnd = 1e6
+		Lighting.GlobalShadows = false
+		Lighting.Ambient = Color3.fromRGB(178, 178, 178)
+		Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+	else
+		Lighting.Brightness = 2
+		Lighting.FogEnd = 100000
+		Lighting.GlobalShadows = true
+	end
+end
+
+LP.Idled:Connect(function()
+	if Config.Misc.AntiAFK then
+		VirtualUser:CaptureController()
+		VirtualUser:ClickButton2(Vector2.new())
+	end
+end)
+
+---------------------------------------------------------------
+-- INTERFACE
+---------------------------------------------------------------
+local ACCENT = Color3.fromRGB(0, 255, 170)
+local BG     = Color3.fromRGB(14, 14, 20)
+local BG2    = Color3.fromRGB(23, 23, 32)
+local TXT    = Color3.fromRGB(232, 234, 244)
+local SUB    = Color3.fromRGB(150, 155, 172)
+
+local vp = Camera.ViewportSize
+local panelW = math.clamp(vp.X * 0.9, 250, 350)
+local panelH = math.clamp(vp.Y * 0.68, 330, 520)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "VeniceMobileHub"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+if not pcall(function() gui.Parent = CoreGui end) then
+	gui.Parent = LP:WaitForChild("PlayerGui")
+end
+
+local function new(class, props)
+	local inst = Instance.new(class)
+	for k, v in pairs(props or {}) do
+		inst[k] = v
+	end
+	return inst
+end
+
+local function corner(inst, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r or 8)
+	c.Parent = inst
+	return c
+end
+
+-- Bouton d'ouverture
+local openBtn = new("TextButton", {
+	Parent = gui,
+	Name = "OpenBtn",
+	Size = UDim2.new(0, 54, 0, 54),
+	Position = UDim2.new(0, 12, 0, 60),
+	BackgroundColor3 = BG,
+	Text = "V",
+	TextColor3 = ACCENT,
+	TextSize = 26,
+	Font = Enum.Font.GothamBold,
+	BorderSizePixel = 0,
+	ZIndex = 5,
+})
+corner(openBtn, 27)
+local obStroke = Instance.new("UIStroke")
+obStroke.Color = ACCENT
+obStroke.Thickness = 2
+obStroke.Parent = openBtn
+
+-- Panneau
+local panel = new("Frame", {
+	Parent = gui,
+	Name = "Panel",
+	Size = UDim2.new(0, panelW, 0, panelH),
+	Position = UDim2.new(0, (vp.X - panelW) / 2, 0, 90),
+	BackgroundColor3 = BG,
+	BorderSizePixel = 0,
+	Visible = false,
+	ZIndex = 10,
+})
+corner(panel, 12)
+local pStroke = Instance.new("UIStroke")
+pStroke.Color = ACCENT
+pStroke.Transparency = 0.5
+pStroke.Thickness = 1.5
+pStroke.Parent = panel
+
+local header = new("Frame", {
+	Parent = panel,
+	Size = UDim2.new(1, 0, 0, 40),
+	BackgroundColor3 = BG2,
+	BorderSizePixel = 0,
+	ZIndex = 11,
+})
+corner(header, 12)
+
+local title = new("TextLabel", {
+	Parent = header,
+	Size = UDim2.new(1, -50, 1, 0),
+	Position = UDim2.new(0, 14, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "VENICE MOBILE HUB",
+	TextColor3 = ACCENT,
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 12,
+})
+
+local closeBtn = new("TextButton", {
+	Parent = header,
+	Size = UDim2.new(0, 34, 0, 34),
+	Position = UDim2.new(1, -40, 0.5, -17),
+	BackgroundTransparency = 1,
+	Text = "×",
+	TextColor3 = TXT,
+	TextSize = 24,
+	Font = Enum.Font.GothamBold,
+	ZIndex = 12,
+})
+
+local tabBar = new("Frame", {
+	Parent = panel,
+	Position = UDim2.new(0, 8, 0, 46),
+	Size = UDim2.new(1, -16, 0, 30),
+	BackgroundTransparency = 1,
+	ZIndex = 11,
+})
+
+local tabNames = { "ESP", "AIM", "TRACK", "PLAY", "MISC" }
+local pages = {}
+local tabButtons = {}
+
+for i, name in ipairs(tabNames) do
+	local btn = new("TextButton", {
+		Parent = tabBar,
+		Size = UDim2.new(1 / #tabNames, -4, 1, 0),
+		Position = UDim2.new((i - 1) / #tabNames, 2, 0, 0),
+		BackgroundColor3 = BG2,
+		Text = name,
+		TextColor3 = SUB,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		BorderSizePixel = 0,
+		ZIndex = 12,
+	})
+	corner(btn, 6)
+	tabButtons[name] = btn
+end
+
+local content = new("Frame", {
+	Parent = panel,
+	Position = UDim2.new(0, 8, 0, 82),
+	Size = UDim2.new(1, -16, 1, -90),
+	BackgroundTransparency = 1,
+	ZIndex = 11,
+})
+
+for _, name in ipairs(tabNames) do
+	local page = new("ScrollingFrame", {
+		Parent = content,
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = ACCENT,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		Visible = false,
+		ZIndex = 11,
+	})
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 6)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = page
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 4)
+	pad.PaddingBottom = UDim.new(0, 10)
+	pad.Parent = page
+	pages[name] = page
+end
+
+local function showTab(name)
+	for n, p in pairs(pages) do p.Visible = (n == name) end
+	for n, b in pairs(tabButtons) do
+		b.BackgroundColor3 = (n == name) and ACCENT or BG2
+		b.TextColor3 = (n == name) and Color3.fromRGB(10, 10, 15) or SUB
+	end
+end
+showTab("ESP")
+
+for name, btn in pairs(tabButtons) do
+	btn.MouseButton1Click:Connect(function() showTab(name) end)
+end
+
+local function sectionLabel(page, text)
+	return new("TextLabel", {
+		Parent = page,
+		Size = UDim2.new(1, 0, 0, 20),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = ACCENT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	})
+end
+
+local function createToggle(page, label, default, callback)
+	local row = new("Frame", {
+		Parent = page,
+		Size = UDim2.new(1, 0, 0, 32),
+		BackgroundColor3 = BG2,
+		BorderSizePixel = 0,
+	})
+	corner(row, 6)
+
+	new("TextLabel", {
+		Parent = row,
+		Size = UDim2.new(1, -70, 1, 0),
+		Position = UDim2.new(0, 10, 0, 0),
+		BackgroundTransparency = 1,
+		Text = label,
+		TextColor3 = TXT,
+		Font = Enum.Font.Gotham,
+		TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	})
+
+	local switch = new("TextButton", {
+		Parent = row,
+		Size = UDim2.new(0, 46, 0, 20),
+		Position = UDim2.new(1, -56, 0.5, -10),
+		BackgroundColor3 = default and ACCENT or Color3.fromRGB(45, 47, 60),
+		Text = "",
+		BorderSizePixel = 0,
+	})
+	corner(switch, 10)
+
+	local knob = new("Frame", {
+		Parent = switch,
+		Size = UDim2.new(0, 16, 0, 16),
+		Position = default and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8),
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+		BorderSizePixel = 0,
+	})
+	corner(knob
